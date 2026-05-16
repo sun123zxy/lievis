@@ -234,14 +234,26 @@ point, but certain operations were just too hard to specify.
     let labelConfig: LabelConfig = 'none'
     let shadeLabels: boolean = false
 
-    type ShadeConfig = 'none' | 'bruhat' | 'rightweak' | 'leftweak' | 'conetype' | 'dihedral' | 'doublecoset'
+    type ShadeConfig = 'none' | 'bruhat' | 'rightweak' | 'leftweak' | 'conetype' | 'dihedral' | 'doublecoset' | 'dominance' | 'paperboat'
     let shadeConfig: ShadeConfig = 'none'
     let shadeCoveringRel = false
+    let shadeDominantOnly = false
+
+    // Force covering and dominant-only for paperboat mode
+    $: if (shadeConfig == 'paperboat') {
+        shadeCoveringRel = true
+        shadeDominantOnly = true
+    }
 
     type CellConfig = 'none' | 'left' | 'right' | 'twosided'
     let cellConfig: CellConfig = 'none'
 
     let selCoxElt: number | null = null
+    let selCoxEltFixed = false
+    type SelHistoryState = {selCoxElt: number | null, selCoxEltFixed: boolean}
+    let selUndoHistory: SelHistoryState[] = []
+    let selRedoHistory: SelHistoryState[] = []
+    const MAX_SEL_HISTORY = 20
 
     type TreeConfig = 'none' | 'shortLex' | 'invshortlex'
     let treeConfig: TreeConfig = 'none'
@@ -265,6 +277,51 @@ point, but certain operations were just too hard to specify.
         return word
     }
 
+    function currentSelState(): SelHistoryState {
+        return {selCoxElt, selCoxEltFixed}
+    }
+
+    function setSelState(state: SelHistoryState) {
+        selCoxElt = state.selCoxElt
+        selCoxEltFixed = state.selCoxEltFixed
+    }
+
+    function commitSelState(nextState: SelHistoryState) {
+        if (selCoxElt === nextState.selCoxElt && selCoxEltFixed === nextState.selCoxEltFixed)
+            return
+
+        selUndoHistory.push(currentSelState())
+        if (selUndoHistory.length > MAX_SEL_HISTORY)
+            selUndoHistory.shift()
+        selRedoHistory = []
+        setSelState(nextState)
+    }
+
+    function canEditSelectionTarget(target: EventTarget | null) {
+        if (!(target instanceof HTMLElement))
+            return false
+
+        return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+    }
+
+    function undoSelection() {
+        let prev = selUndoHistory.pop()
+        if (prev == null)
+            return
+
+        selRedoHistory.push(currentSelState())
+        setSelState(prev)
+    }
+
+    function redoSelection() {
+        let next = selRedoHistory.pop()
+        if (next == null)
+            return
+
+        selUndoHistory.push(currentSelState())
+        setSelState(next)
+    }
+
     type PCanConfig = {
         char: number
         paraBits: number
@@ -277,6 +334,7 @@ point, but certain operations were just too hard to specify.
         labels: LabelConfig
         labelShade: boolean
         shade: ShadeConfig
+        shadeDominant: boolean
         cells: CellConfig
         nfTree: TreeConfig
         pDialation: number
@@ -292,6 +350,7 @@ point, but certain operations were just too hard to specify.
         labels: 'none',
         labelShade: false,
         shade: 'none',
+        shadeDominant: false,
         cells: 'none',
         nfTree: 'none',
         pDialation: 5,
@@ -318,6 +377,7 @@ point, but certain operations were just too hard to specify.
         labels: labelConfig,
         labelShade: shadeLabels,
         shade: shadeConfig,
+        shadeDominant: shadeDominantOnly,
         cells: cellConfig,
         nfTree: treeConfig,
         pDialation,
@@ -350,6 +410,7 @@ point, but certain operations were just too hard to specify.
         labelConfig = config.labels
         shadeLabels = config.labelShade
         shadeConfig = config.shade
+        shadeDominantOnly = config.shadeDominant
         cellConfig = config.cells
         treeConfig = config.nfTree
         pDialation = config.pDialation
@@ -365,13 +426,14 @@ point, but certain operations were just too hard to specify.
         shadeConfig: ShadeConfig
         shadeLabels: boolean
         shadeCoveringRel: boolean
+        shadeDominantOnly: boolean
         cellConfig: CellConfig
         treeConfig: TreeConfig
         simpLabelConfig: SimpLabelConfig
     }
 
     let displayConfig: DisplayConfig
-    $: displayConfig = {selCoxElt, shownCoxElts, labelConfig, shadeLabels, shadeConfig, shadeCoveringRel, cellConfig, treeConfig, simpLabelConfig}
+    $: displayConfig = {selCoxElt, shownCoxElts, labelConfig, shadeLabels, shadeConfig, shadeCoveringRel, shadeDominantOnly, cellConfig, treeConfig, simpLabelConfig}
 
     // A label function returns a function giving each Coxeter element a label. The label can be a string or a number,
     // empty strings and zeros are completely ignored.
@@ -479,49 +541,163 @@ point, but certain operations were just too hard to specify.
     $: shadedSet = createShadedSet(rtDat, displayConfig)
     function createShadedSet(rtDat: RootData, displayConfig: DisplayConfig): maps.IMap<number, string> {
         let map = new maps.FlatIntMap<string>()
-        if (displayConfig.shadeConfig == 'dihedral') {
-            return maps.fromKeysValFn(
-                maps.FlatIntMap,
-                displayConfig.shownCoxElts.filter(elt => rtDat.cox.coatoms(elt).length <= 2),
-                elt => '#00000022',
-            )
-        }
-
-        if (displayConfig.shadeConfig == 'none' || displayConfig.selCoxElt == null)
+        // If a mode needs to force dominant-only filtering, set this to true
+        let overrideShadeDominantOnly = false
+        
+        if (displayConfig.shadeConfig == 'none')
             return map
 
-        if (displayConfig.shadeConfig == 'conetype') {
+        if (displayConfig.shadeConfig == 'dihedral') {
+            for (let elt of displayConfig.shownCoxElts.filter(elt => rtDat.cox.coatoms(elt).length <= 2))
+                map.set(elt, '#00000022')
+        } else if (displayConfig.selCoxElt == null) {
+            return map
+        } else if (displayConfig.shadeConfig == 'conetype') {
             for (let elt of displayConfig.shownCoxElts) {
                 let prod = rtDat.cox.multMaybe(displayConfig.selCoxElt, elt)
                 if (prod !== null && rtDat.cox.length(prod) == rtDat.cox.length(displayConfig.selCoxElt) + rtDat.cox.length(elt))
                     map.set(elt, '#00000022')
             }
-
-            return map
-        }
-
-        if (displayConfig.shadeConfig == 'doublecoset') {
+        } else if (displayConfig.shadeConfig == 'doublecoset') {
             let para = (1<<3) | (1<<4) | (1<<0) | (1<<1)
-            return maps.fromKeysValFn(
-                maps.FlatIntMap,
-                displayConfig.shownCoxElts.filter(w => rtDat.cox.isMinimal(para, w)),
-                w => '#00000022',
-            )
+            for (let w of displayConfig.shownCoxElts.filter(w => rtDat.cox.isMinimal(para, w)))
+                map.set(w, '#00000022')
+        } else if (displayConfig.shadeConfig == 'paperboat') {
+            // Paper boat: shade Bruhat lower interval L(λ),
+            // color covering alcoves (in dominant chamber) with light green,
+            // and color paper boat with yellow.
+            let sel = displayConfig.selCoxElt
+            if (sel == null) return map
+
+            let lower = rtDat.cox.bruhatLower(sel, 'bruhat')
+            for (let elt of displayConfig.shownCoxElts)
+                if (lower[elt])
+                    map.set(elt, '#00000022')
+
+            let {shaded: _, covering} = dominanceLower(sel, displayConfig.shownCoxElts, rtDat)
+            // Filter covering to only those in the dominant chamber
+            let coverInDomChamber = covering.filter(cov => {
+                let mu = coweightFromAlcove(rtDat.finAlcoveFor(cov))
+                return mu[0] >= 0 && mu[1] >= 0
+            })
+
+            // Color the covering alcoves themselves with light green
+            for (let cov of coverInDomChamber)
+                map.set(cov, '#00ff0022')
+
+            let coverUnion = new Set<number>()
+            for (let cov of coverInDomChamber) {
+                let lc = rtDat.cox.bruhatLower(cov, 'bruhat')
+                for (let elt of displayConfig.shownCoxElts)
+                    if (lc[elt]) coverUnion.add(elt)
+            }
+
+            // Color the paper-boat with yellow
+            for (let elt of displayConfig.shownCoxElts)
+                if (lower[elt] && !coverUnion.has(elt))
+                    map.set(elt, '#ffff0022')
+
+            overrideShadeDominantOnly = true
+        } else if (displayConfig.shadeConfig == 'dominance') {
+            let {shaded, covering} = dominanceLower(displayConfig.selCoxElt, displayConfig.shownCoxElts, rtDat)
+            shaded.forEach((elt, shade) => map.set(elt, shade))
+            if (displayConfig.shadeCoveringRel) {
+                for (let elt of covering)
+                    map.set(elt, '#00ff0022')
+            }
+        } else {
+            let lower = rtDat.cox.bruhatLower(displayConfig.selCoxElt, displayConfig.shadeConfig)
+            for (let elt of displayConfig.shownCoxElts)
+                if (lower[elt])
+                    map.set(elt, '#00000022')
+
+            if (displayConfig.shadeCoveringRel) {
+                rtDat.cox.descendents(displayConfig.selCoxElt, displayConfig.shadeConfig).forEach(y => {
+                    if (displayConfig.shownCoxElts.indexOf(y) >= 0)
+                        map.set(y, '#00ff0022')
+                })
+            }
         }
 
-        let lower = rtDat.cox.bruhatLower(displayConfig.selCoxElt, displayConfig.shadeConfig)
-        for (let elt of displayConfig.shownCoxElts)
-            if (lower[elt])
-                map.set(elt, '#00000022')
-
-        if (displayConfig.shadeCoveringRel) {
-            rtDat.cox.descendents(displayConfig.selCoxElt, displayConfig.shadeConfig).forEach(y => {
-                if (displayConfig.shownCoxElts.indexOf(y) >= 0)
-                    map.set(y, '#00ff0022')
+        // Apply shadeDominantOnly filter: only show elements in the dominant chamber (coweight ≥ 0)
+        if (displayConfig.shadeDominantOnly || overrideShadeDominantOnly) {
+            let newMap = new maps.FlatIntMap<string>()
+            map.forEach((elt, shade) => {
+                let mu = coweightFromAlcove(rtDat.finAlcoveFor(elt))
+                if (mu[0] >= 0 && mu[1] >= 0)
+                    newMap.set(elt, shade)
             })
+            return newMap
         }
 
         return map
+    }
+
+    /** Return the coweight of an alcove by taking its interior point. */
+    function coweightFromAlcove(alcove: AlcoveData): Vec {
+        return [alcove.intPt[0], alcove.intPt[1]]
+    }
+
+    /** Shade the dominance lower set using the fixed positive coroot cone.
+     * We compare alcoves by the difference of their coweights and test whether that difference is a
+     * nonnegative integral combination of simple coroots.
+     */
+    function dominanceLower(selCoxElt: number, shownCoxElts: number[], rtDat: RootData): {shaded: maps.FlatIntMap<string>, covering: number[]} {
+        let shaded = new maps.FlatIntMap<string>()
+        let covering: number[] = []
+
+        let lambda = coweightFromAlcove(rtDat.finAlcoveFor(selCoxElt))
+        let invCartan = mat.inverse(rtDat.finCartanMat)
+
+        function corootCoefficients(from: Vec, to: Vec): Vec | null {
+            let coeffs = mat.multVecLeft(vec.sub(from, to), invCartan)
+            for (let coeff of coeffs) {
+                let rounded = Math.round(coeff)
+                if (Math.abs(coeff - rounded) > 1e-8 || rounded < 0)
+                    return null
+            }
+
+            return coeffs
+        }
+
+        let coweightToAlcoves = new maps.EntryVecMap<number[]>()
+        for (let elt of shownCoxElts) {
+            let mu = coweightFromAlcove(rtDat.finAlcoveFor(elt))
+            let elts = coweightToAlcoves.getWithDefault(mu, [])
+            elts.push(elt)
+            coweightToAlcoves.set(mu, elts)
+        }
+
+        let lowerCoweights: Vec[] = []
+        coweightToAlcoves.forEach((mu, alces) => {
+            if (corootCoefficients(lambda, mu) !== null) {
+                lowerCoweights.push(mu)
+                for (let elt of alces)
+                    shaded.set(elt, '#00000022')
+            }
+        })
+
+        for (let mu of lowerCoweights) {
+            if (mu[0] == lambda[0] && mu[1] == lambda[1])
+                continue
+
+            let isCover = true
+            for (let nu of lowerCoweights) {
+                if ((nu[0] == mu[0] && nu[1] == mu[1]) || (nu[0] == lambda[0] && nu[1] == lambda[1]))
+                    continue
+
+                if (corootCoefficients(lambda, nu) !== null && corootCoefficients(nu, mu) !== null) {
+                    isCover = false
+                    break
+                }
+            }
+
+            if (isCover && coweightToAlcoves.contains(mu))
+                for (let elt of coweightToAlcoves.get(mu))
+                    covering.push(elt)
+        }
+
+        return {shaded, covering}
     }
 
 
@@ -929,10 +1105,39 @@ point, but certain operations were just too hard to specify.
     let canvasElt: HTMLCanvasElement
 
     function hoverPoint(xy: number[]) {
+        if (selCoxEltFixed)
+            return
+
         let wt = D.aff2.uv(xy)
         let word = rtsys.makeDominantWord(rtDat.affCartanMat, 'coweight', rtDat.toAff(wt), 2000)
         let elt = rtDat.cox.readWordMaybe(word)
-        selCoxElt = (shownCoxElts.indexOf(elt) >= 0) ? elt : null
+        selCoxElt = (elt != null && shownCoxElts.indexOf(elt) >= 0) ? elt : null
+    }
+
+    function clickPoint(xy: number[]) {
+        let wt = D.aff2.uv(xy)
+        let word = rtsys.makeDominantWord(rtDat.affCartanMat, 'coweight', rtDat.toAff(wt), 2000)
+        let elt = rtDat.cox.readWordMaybe(word)
+        let clickedElt = (elt != null && shownCoxElts.indexOf(elt) >= 0) ? elt : null
+
+        if (selCoxEltFixed && selCoxElt === clickedElt)
+            return
+
+        commitSelState({selCoxElt: clickedElt, selCoxEltFixed: true})
+    }
+
+    function handleKeydown(e: KeyboardEvent) {
+        if (canEditSelectionTarget(e.target))
+            return
+
+        if (!(e.ctrlKey || e.metaKey))
+            return
+
+        if (e.key == 'z' || e.key == 'Z') {
+            if (e.shiftKey) redoSelection()
+            else undoSelection()
+            e.preventDefault()
+        }
     }
 
     let frame: number = 0
@@ -971,7 +1176,7 @@ point, but certain operations were just too hard to specify.
     td:nth-child(2) { width: 100%; text-align: right; }
 </style>
 
-<svelte:window on:hashchange={(e) => loadFromHash(document.location.hash.substr(1))} />
+<svelte:window on:hashchange={(e) => loadFromHash(document.location.hash.substr(1))} on:keydown={handleKeydown} />
 
 <InteractiveMap
     minScale={10}
@@ -982,6 +1187,7 @@ point, but certain operations were just too hard to specify.
     bind:controlsShown
     {takeSnapshot}
     on:pointHovered={(e) => hoverPoint(e.detail)}
+    on:pointSelected={(e) => clickPoint(e.detail)}
     >
     <svelte:fragment slot="other">
         <canvas bind:this={canvasElt} />
@@ -1042,12 +1248,18 @@ point, but certain operations were just too hard to specify.
                         <option value="conetype">Cone type</option>
                         <option value="dihedral">Dihedral elements</option>
                         <option value="doublecoset">Minimal double coset reps</option>
+                        <option value="dominance">Dominance</option>
+                        <option value="paperboat">Paper boat</option>
                     </select>
                 </td>
             </tr>
             <tr>
                 <td><label for="shadeCoveringRel">Covering?</label></td>
-                <td><input type="checkbox" disabled={shadeConfig == 'none'} bind:checked={shadeCoveringRel} /></td>
+                <td><input type="checkbox" disabled={shadeConfig == 'none' || shadeConfig == 'paperboat'} bind:checked={shadeCoveringRel} /></td>
+            </tr>
+            <tr>
+                <td><label for="shadeDominantOnly">Dominant cone?</label></td>
+                <td><input type="checkbox" disabled={shadeConfig == 'none' || shadeConfig == 'paperboat'} bind:checked={shadeDominantOnly} /></td>
             </tr>
             <tr>
                 <td><label for="cellConfig">Show cells:</label></td>

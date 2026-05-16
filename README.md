@@ -1,4 +1,18 @@
-# Lievis
+# Lievis with Paper BOATs
+
+This repository is a fork of the original [Lievis](https://github.com/joelgibson/lievis) codebase by [Joel Gibson](https://www.jgibson.id.au/), with some additional features added to `AffineWeyl` visualisation:
+
+- Added `Dominance` shading. It shades alcoves that has lower dominance order than the selected alcove in the sense of the coroot lattice.
+- Added `Dominant cone?` toggle to restrict shading to the dominant cone.
+- Added `Paper boat` shading. Currently only comprehensible for alcoves in the dominant chamber.
+- Now AffineWeyl also have click-to-fix feature (like that of `WeylGroup`).
+- click-to-fix feature supports `ctrl+z` / `ctrl+shift+z` undo/redo.
+
+The main motivation of this fork is to visualise the Paper BOATs. See [the paper](https://arxiv.org/abs/2504.04489) for details. Feel free to play around with them online.
+
+The code is written with LLM assistance and I could not guarantee its quality or correctness. Do feel free to reach out if you have any questions or suggestions.
+
+## Original README
 
 This is the software running the visualisations at <https://www.jgibson.id.au/lievis/>.
 

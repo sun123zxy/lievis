@@ -1,3 +1,7 @@
 packages:
   - 'lielib'
   - 'site'
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  svelte-preprocess: true
