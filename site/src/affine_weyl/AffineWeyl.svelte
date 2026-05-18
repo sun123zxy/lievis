@@ -23,6 +23,42 @@ point, but certain operations were just too hard to specify.
 
     const MAX_LENGTH = 80
 
+    // Predefined palette for tiling
+    const tilingColourPalette = [
+        '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8',
+        '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B88B', '#52C4A5',
+    ]
+
+    function getTilingColour(index: number): string {
+        return tilingColourPalette[index % tilingColourPalette.length]
+    }
+
+    function brighten(hexColour: string, factor: number): string {
+        let r = parseInt(hexColour.slice(1, 3), 16)
+        let g = parseInt(hexColour.slice(3, 5), 16)
+        let b = parseInt(hexColour.slice(5, 7), 16)
+        let a = hexColour.length > 7 ? parseInt(hexColour.slice(7, 9), 16) : 255
+
+        r = Math.min(255, Math.floor(r * factor))
+        g = Math.min(255, Math.floor(g * factor))
+        b = Math.min(255, Math.floor(b * factor))
+
+        return '#' + [r, g, b, a].map(x => x.toString(16).padStart(2, '0')).join('')
+    }
+
+    function boatShapeHash(boatAlcoves: number[], topAlcove: number, rtDat: RootData): string {
+        const PRECISION = 1e8
+        let topCoweight = coweightFromAlcove(rtDat.finAlcoveFor(topAlcove))
+        let relCoords = boatAlcoves.map(elt => {
+            let coweight = coweightFromAlcove(rtDat.finAlcoveFor(elt))
+            return [
+                Math.round((coweight[0] - topCoweight[0]) * PRECISION) / PRECISION,
+                Math.round((coweight[1] - topCoweight[1]) * PRECISION) / PRECISION,
+            ]
+        }).sort((a, b) => a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1])
+        return JSON.stringify(relCoords)
+    }
+
     type Rank2Type = 'A' | 'B' | 'C' | 'G'
 
     let userPort = {width: 0, height: 0, aff: aff.Aff2.id}
@@ -238,10 +274,23 @@ point, but certain operations were just too hard to specify.
     let shadeConfig: ShadeConfig = 'none'
     let shadeCoveringRel = false
     let shadeDominantOnly = false
+    let tilingDepth = 1
 
-    // Force covering and dominant-only for paperboat mode
+    // Shape cache for tiling: persists across computations to maintain color consistency
+    let shapeHashToColourIdx: {[hash: string]: number} = {}
+    let nextColourIdx = 0
+
+    function getShapeColourIndex(hash: string): number {
+        let idx = shapeHashToColourIdx[hash]
+        if (idx === undefined) {
+            idx = nextColourIdx++
+            shapeHashToColourIdx[hash] = idx
+        }
+        return idx
+    }
+
+    // Force dominant-only for paperboat mode
     $: if (shadeConfig == 'paperboat') {
-        shadeCoveringRel = true
         shadeDominantOnly = true
     }
 
@@ -384,6 +433,80 @@ point, but certain operations were just too hard to specify.
         pDialationEnabled,
         pCan: pcanIndex,
         simples: simpLabelConfig,
+    }
+
+    let tilingResult: maps.IMap<number, string>
+    $: tilingResult = (shadeConfig == 'paperboat' && displayConfig.selCoxElt != null)
+        ? computeTiling(displayConfig.selCoxElt, rtDat, displayConfig, tilingDepth, displayConfig.shadeCoveringRel)
+        : new maps.FlatIntMap<string>()
+
+    function computeTiling(topAlcove: number, rtDat: RootData, displayConfig: DisplayConfig, maxDepth: number, showCovering: boolean): maps.IMap<number, string> {
+        let colorMap = new maps.FlatIntMap<string>()
+        let visited = new Set<number>()
+        let queue: {alcove: number, depth: number}[] = [{alcove: topAlcove, depth: 0}]
+
+        const GREEN = '#00ff0022'
+
+        while (queue.length > 0) {
+            let {alcove: currentAlcove, depth} = queue.shift()!
+            if (visited.has(currentAlcove)) continue
+            visited.add(currentAlcove)
+
+            let lower = rtDat.cox.bruhatLower(currentAlcove, 'bruhat')
+            let bruhatLowerSet = displayConfig.shownCoxElts.filter(elt => lower[elt])
+
+            let {shaded: _, covering} = dominanceLower(currentAlcove, displayConfig.shownCoxElts, rtDat)
+            let coverInDomChamber = covering.filter(cov => {
+                let mu = coweightFromAlcove(rtDat.finAlcoveFor(cov))
+                return mu[0] >= 0 && mu[1] >= 0
+            })
+
+            let coverUnion = new Set<number>()
+            for (let cov of coverInDomChamber) {
+                let lc = rtDat.cox.bruhatLower(cov, 'bruhat')
+                for (let elt of displayConfig.shownCoxElts)
+                    if (lc[elt]) coverUnion.add(elt)
+            }
+
+            // Only consider elements in the dominant chamber
+            let bruhatLowerInDomChamber = bruhatLowerSet.filter(elt => {
+                let mu = coweightFromAlcove(rtDat.finAlcoveFor(elt))
+                return mu[0] >= 0 && mu[1] >= 0
+            })
+
+            // Paper boat = elements in dominant chamber that are NOT in coverUnion
+            let paperBoat = bruhatLowerInDomChamber.filter(elt => !coverUnion.has(elt))
+
+            let shapeHash = boatShapeHash(paperBoat, currentAlcove, rtDat)
+            let colourIdx = getShapeColourIndex(shapeHash)
+            let baseColour = getTilingColour(colourIdx)
+
+            for (let elt of bruhatLowerInDomChamber) {
+                if (elt == currentAlcove) {
+                    if (showCovering) {
+                        colorMap.set(elt, brighten(baseColour, 1.1))
+                    } else {
+                        colorMap.set(elt, baseColour)
+                    }
+                } else if (!coverUnion.has(elt)) {
+                    colorMap.set(elt, baseColour)
+                }
+            }
+
+            if (depth < maxDepth - 1) {
+                for (let cov of coverInDomChamber) {
+                    if (!visited.has(cov) && displayConfig.shownCoxElts.indexOf(cov) >= 0) {
+                        queue.push({alcove: cov, depth: depth + 1})
+                    }
+                }
+            } else if (showCovering) {
+                for (let cov of coverInDomChamber) {
+                    colorMap.set(cov, GREEN)
+                }
+            }
+        }
+
+        return colorMap
     }
 
     function loadFromHash(fragment: string) {
@@ -538,8 +661,8 @@ point, but certain operations were just too hard to specify.
 
     // Compute a shaded set for ordering
     let shadedSet: maps.IMap<number, string>
-    $: shadedSet = createShadedSet(rtDat, displayConfig)
-    function createShadedSet(rtDat: RootData, displayConfig: DisplayConfig): maps.IMap<number, string> {
+    $: shadedSet = createShadedSet(rtDat, displayConfig, tilingResult)
+    function createShadedSet(rtDat: RootData, displayConfig: DisplayConfig, tilingResult: maps.IMap<number, string>): maps.IMap<number, string> {
         let map = new maps.FlatIntMap<string>()
         // If a mode needs to force dominant-only filtering, set this to true
         let overrideShadeDominantOnly = false
@@ -552,7 +675,16 @@ point, but certain operations were just too hard to specify.
                 map.set(elt, '#00000022')
         } else if (displayConfig.selCoxElt == null) {
             return map
-        } else if (displayConfig.shadeConfig == 'conetype') {
+        }
+
+        // If dominant cone filter is active and selected element is outside it, don't shade anything
+        if ((displayConfig.shadeDominantOnly || overrideShadeDominantOnly) && displayConfig.selCoxElt != null) {
+            let selMu = coweightFromAlcove(rtDat.finAlcoveFor(displayConfig.selCoxElt))
+            if (selMu[0] < 0 || selMu[1] < 0)
+                return map
+        }
+
+        if (displayConfig.shadeConfig == 'conetype') {
             for (let elt of displayConfig.shownCoxElts) {
                 let prod = rtDat.cox.multMaybe(displayConfig.selCoxElt, elt)
                 if (prod !== null && rtDat.cox.length(prod) == rtDat.cox.length(displayConfig.selCoxElt) + rtDat.cox.length(elt))
@@ -563,39 +695,17 @@ point, but certain operations were just too hard to specify.
             for (let w of displayConfig.shownCoxElts.filter(w => rtDat.cox.isMinimal(para, w)))
                 map.set(w, '#00000022')
         } else if (displayConfig.shadeConfig == 'paperboat') {
-            // Paper boat: shade Bruhat lower interval L(λ),
-            // color covering alcoves (in dominant chamber) with light green,
-            // and color paper boat with yellow.
             let sel = displayConfig.selCoxElt
             if (sel == null) return map
 
             let lower = rtDat.cox.bruhatLower(sel, 'bruhat')
-            for (let elt of displayConfig.shownCoxElts)
-                if (lower[elt])
+            for (let elt of displayConfig.shownCoxElts) {
+                if (lower[elt]) {
                     map.set(elt, '#00000022')
-
-            let {shaded: _, covering} = dominanceLower(sel, displayConfig.shownCoxElts, rtDat)
-            // Filter covering to only those in the dominant chamber
-            let coverInDomChamber = covering.filter(cov => {
-                let mu = coweightFromAlcove(rtDat.finAlcoveFor(cov))
-                return mu[0] >= 0 && mu[1] >= 0
-            })
-
-            // Color the covering alcoves themselves with light green
-            for (let cov of coverInDomChamber)
-                map.set(cov, '#00ff0022')
-
-            let coverUnion = new Set<number>()
-            for (let cov of coverInDomChamber) {
-                let lc = rtDat.cox.bruhatLower(cov, 'bruhat')
-                for (let elt of displayConfig.shownCoxElts)
-                    if (lc[elt]) coverUnion.add(elt)
+                }
             }
 
-            // Color the paper-boat with yellow
-            for (let elt of displayConfig.shownCoxElts)
-                if (lower[elt] && !coverUnion.has(elt))
-                    map.set(elt, '#ffff0022')
+            tilingResult.forEach((elt, colour) => map.set(elt, colour))
 
             overrideShadeDominantOnly = true
         } else if (displayConfig.shadeConfig == 'dominance') {
@@ -1255,11 +1365,15 @@ point, but certain operations were just too hard to specify.
             </tr>
             <tr>
                 <td><label for="shadeCoveringRel">Covering?</label></td>
-                <td><input type="checkbox" disabled={shadeConfig == 'none' || shadeConfig == 'paperboat'} bind:checked={shadeCoveringRel} /></td>
+                <td><input type="checkbox" disabled={shadeConfig == 'none'} bind:checked={shadeCoveringRel} /></td>
             </tr>
             <tr>
                 <td><label for="shadeDominantOnly">Dominant cone?</label></td>
                 <td><input type="checkbox" disabled={shadeConfig == 'none' || shadeConfig == 'paperboat'} bind:checked={shadeDominantOnly} /></td>
+            </tr>
+            <tr>
+                <td><label for="tilingDepth">Tiling depth:</label></td>
+                <td><input type="range" id="tilingDepth" min="1" max="20" disabled={shadeConfig != 'paperboat'} bind:value={tilingDepth} style="width: 8em" /><span style="margin-left: 0.5em">{tilingDepth}</span></td>
             </tr>
             <tr>
                 <td><label for="cellConfig">Show cells:</label></td>
