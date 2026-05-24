@@ -239,6 +239,7 @@ point, but certain operations were just too hard to specify.
         aff.Aff2.fromLinear(rtDat.proj, rtDat.sect).then(userPort.aff),
     )
     let shownCoxElts: number[] = []
+    $: shownCoxEltsSet = new Set(shownCoxElts)
 
     $: ({pcanBasis, shownCoxElts} = computeShownCoxElts(rtDat, magmaJson))
     function computeShownCoxElts(rtDat: RootData, magmaJson: MagmaJson | null) {
@@ -493,7 +494,7 @@ point, but certain operations were just too hard to specify.
 
             if (depth < maxDepth - 1) {
                 for (let cov of coverInDomChamber) {
-                    if (!visited.has(cov) && displayConfig.shownCoxElts.indexOf(cov) >= 0) {
+                    if (!visited.has(cov) && displayConfig.shownCoxEltsSet.has(cov)) {
                         queue.push({alcove: cov, depth: depth + 1})
                     }
                 }
@@ -545,6 +546,7 @@ point, but certain operations were just too hard to specify.
     type DisplayConfig = {
         selCoxElt: number | null
         shownCoxElts: number[]
+        shownCoxEltsSet: Set<number>
         labelConfig: LabelConfig
         shadeConfig: ShadeConfig
         shadeLabels: boolean
@@ -556,7 +558,7 @@ point, but certain operations were just too hard to specify.
     }
 
     let displayConfig: DisplayConfig
-    $: displayConfig = {selCoxElt, shownCoxElts, labelConfig, shadeLabels, shadeConfig, shadeCoveringRel, shadeDominantOnly, cellConfig, treeConfig, simpLabelConfig}
+    $: displayConfig = {selCoxElt, shownCoxElts, shownCoxEltsSet, labelConfig, shadeLabels, shadeConfig, shadeCoveringRel, shadeDominantOnly, cellConfig, treeConfig, simpLabelConfig}
 
     // A label function returns a function giving each Coxeter element a label. The label can be a string or a number,
     // empty strings and zeros are completely ignored.
@@ -723,7 +725,7 @@ point, but certain operations were just too hard to specify.
 
             if (displayConfig.shadeCoveringRel) {
                 rtDat.cox.descendents(displayConfig.selCoxElt, displayConfig.shadeConfig).forEach(y => {
-                    if (displayConfig.shownCoxElts.indexOf(y) >= 0)
+                    if (displayConfig.shownCoxEltsSet.has(y))
                         map.set(y, '#00ff0022')
                 })
             }
@@ -1221,14 +1223,14 @@ point, but certain operations were just too hard to specify.
         let wt = D.aff2.uv(xy)
         let word = rtsys.makeDominantWord(rtDat.affCartanMat, 'coweight', rtDat.toAff(wt), 2000)
         let elt = rtDat.cox.readWordMaybe(word)
-        selCoxElt = (elt != null && shownCoxElts.indexOf(elt) >= 0) ? elt : null
+        selCoxElt = (elt != null && shownCoxEltsSet.has(elt)) ? elt : null
     }
 
     function clickPoint(xy: number[]) {
         let wt = D.aff2.uv(xy)
         let word = rtsys.makeDominantWord(rtDat.affCartanMat, 'coweight', rtDat.toAff(wt), 2000)
         let elt = rtDat.cox.readWordMaybe(word)
-        let clickedElt = (elt != null && shownCoxElts.indexOf(elt) >= 0) ? elt : null
+        let clickedElt = (elt != null && shownCoxEltsSet.has(elt)) ? elt : null
 
         if (selCoxEltFixed && selCoxElt === clickedElt)
             return
