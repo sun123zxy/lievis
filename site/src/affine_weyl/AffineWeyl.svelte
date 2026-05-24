@@ -34,16 +34,8 @@ point, but certain operations were just too hard to specify.
     }
 
     function brighten(hexColour: string, factor: number): string {
-        let r = parseInt(hexColour.slice(1, 3), 16)
-        let g = parseInt(hexColour.slice(3, 5), 16)
-        let b = parseInt(hexColour.slice(5, 7), 16)
-        let a = hexColour.length > 7 ? parseInt(hexColour.slice(7, 9), 16) : 255
-
-        r = Math.min(255, Math.floor(r * factor))
-        g = Math.min(255, Math.floor(g * factor))
-        b = Math.min(255, Math.floor(b * factor))
-
-        return '#' + [r, g, b, a].map(x => x.toString(16).padStart(2, '0')).join('')
+        let [r, g, b, a] = colour.hex2rgba(hexColour)
+        return colour.rgba2hex([Math.min(1, r * factor), Math.min(1, g * factor), Math.min(1, b * factor), a])
     }
 
     function boatShapeHash(boatAlcoves: number[], topAlcove: number, rtDat: RootData): string {
@@ -384,6 +376,8 @@ point, but certain operations were just too hard to specify.
         labelShade: boolean
         shade: ShadeConfig
         shadeDominant: boolean
+        shadeCovering: boolean
+        tilingDepth: number
         cells: CellConfig
         nfTree: TreeConfig
         pDialation: number
@@ -400,6 +394,8 @@ point, but certain operations were just too hard to specify.
         labelShade: false,
         shade: 'none',
         shadeDominant: false,
+        shadeCovering: false,
+        tilingDepth: 1,
         cells: 'none',
         nfTree: 'none',
         pDialation: 5,
@@ -427,6 +423,8 @@ point, but certain operations were just too hard to specify.
         labelShade: shadeLabels,
         shade: shadeConfig,
         shadeDominant: shadeDominantOnly,
+        shadeCovering: shadeCoveringRel,
+        tilingDepth,
         cells: cellConfig,
         nfTree: treeConfig,
         pDialation,
@@ -534,6 +532,8 @@ point, but certain operations were just too hard to specify.
         shadeLabels = config.labelShade
         shadeConfig = config.shade
         shadeDominantOnly = config.shadeDominant
+        shadeCoveringRel = config.shadeCovering
+        tilingDepth = config.tilingDepth
         cellConfig = config.cells
         treeConfig = config.nfTree
         pDialation = config.pDialation
