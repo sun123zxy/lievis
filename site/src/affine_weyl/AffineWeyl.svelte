@@ -291,8 +291,8 @@ point, but certain operations were just too hard to specify.
     let cellConfig: CellConfig = 'none'
 
     let selCoxElt: number | null = null
-    let selCoxEltFixed = false
-    type SelHistoryState = {selCoxElt: number | null, selCoxEltFixed: boolean}
+    let rightSelCoxElt: number | null = null
+    type SelHistoryState = {selCoxElt: number | null, rightSelCoxElt: number | null}
     let selUndoHistory: SelHistoryState[] = []
     let selRedoHistory: SelHistoryState[] = []
     const MAX_SEL_HISTORY = 20
@@ -320,16 +320,16 @@ point, but certain operations were just too hard to specify.
     }
 
     function currentSelState(): SelHistoryState {
-        return {selCoxElt, selCoxEltFixed}
+        return {selCoxElt, rightSelCoxElt}
     }
 
     function setSelState(state: SelHistoryState) {
         selCoxElt = state.selCoxElt
-        selCoxEltFixed = state.selCoxEltFixed
+        rightSelCoxElt = state.rightSelCoxElt
     }
 
     function commitSelState(nextState: SelHistoryState) {
-        if (selCoxElt === nextState.selCoxElt && selCoxEltFixed === nextState.selCoxEltFixed)
+        if (selCoxElt === nextState.selCoxElt && rightSelCoxElt === nextState.rightSelCoxElt)
             return
 
         selUndoHistory.push(currentSelState())
@@ -545,6 +545,7 @@ point, but certain operations were just too hard to specify.
 
     type DisplayConfig = {
         selCoxElt: number | null
+        rightSelCoxElt: number | null
         shownCoxElts: number[]
         shownCoxEltsSet: Set<number>
         labelConfig: LabelConfig
@@ -558,7 +559,7 @@ point, but certain operations were just too hard to specify.
     }
 
     let displayConfig: DisplayConfig
-    $: displayConfig = {selCoxElt, shownCoxElts, shownCoxEltsSet, labelConfig, shadeLabels, shadeConfig, shadeCoveringRel, shadeDominantOnly, cellConfig, treeConfig, simpLabelConfig}
+    $: displayConfig = {selCoxElt, rightSelCoxElt, shownCoxElts, shownCoxEltsSet, labelConfig, shadeLabels, shadeConfig, shadeCoveringRel, shadeDominantOnly, cellConfig, treeConfig, simpLabelConfig}
 
     // A label function returns a function giving each Coxeter element a label. The label can be a string or a number,
     // empty strings and zeros are completely ignored.
@@ -728,6 +729,14 @@ point, but certain operations were just too hard to specify.
                     if (displayConfig.shownCoxEltsSet.has(y))
                         map.set(y, '#00ff0022')
                 })
+            }
+
+            // If right-selected, restrict to the Bruhat interval [rightSelCoxElt, selCoxElt]
+            if (displayConfig.rightSelCoxElt != null && rtDat.cox.isEnumerated(displayConfig.rightSelCoxElt)) {
+                let upper = rtDat.cox.bruhatUpper(displayConfig.rightSelCoxElt, displayConfig.shadeConfig)
+                let newMap = new maps.FlatIntMap<string>()
+                map.forEach((elt, shade) => { if (upper[elt]) newMap.set(elt, shade) })
+                map = newMap
             }
         }
 
@@ -1059,6 +1068,7 @@ point, but certain operations were just too hard to specify.
         pDialatedGenerator: number,
         pxDialatedAlcoves: AlcoveData[],
         selCoxElt: null | number,
+        rightSelCoxElt: null | number,
         shownLabels: maps.IMap<number, string>,
         shadedSet: maps.IMap<CoxElt, string>,
         cellColours: maps.FlatIntMap<string>,
@@ -1080,7 +1090,7 @@ point, but certain operations were just too hard to specify.
         ctx.scale(dpr, dpr)
         ctx.clearRect(0, 0, cssWidth, cssHeight)
 
-        drawContext(ctx, D, rtDat, pDialation, pDialationEnabled, pDialatedGenerator, pxDialatedAlcoves, selCoxElt, shownLabels, shadedSet, cellColours, treeEdges, viewportGeometry, userPort)
+        drawContext(ctx, D, rtDat, pDialation, pDialationEnabled, pDialatedGenerator, pxDialatedAlcoves, selCoxElt, rightSelCoxElt, shownLabels, shadedSet, cellColours, treeEdges, viewportGeometry, userPort)
     }
 
     function drawContext(
@@ -1092,6 +1102,7 @@ point, but certain operations were just too hard to specify.
         pDialatedGenerator: number,
         pxDialatedAlcoves: AlcoveData[],
         selCoxElt: null | number,
+        rightSelCoxElt: null | number,
         shownLabels: maps.IMap<number, string>,
         shadedSet: maps.IMap<CoxElt, string>,
         cellColours: maps.FlatIntMap<string>,
@@ -1129,6 +1140,11 @@ point, but certain operations were just too hard to specify.
                 // if (coxEltToIdx.contains(left))
                 //     fillTriangle(ctx, '#dc93eb44', pxDialatedAlcoves[left].vertices)
             }
+        }
+
+        // Colour the right-selected element
+        if (rightSelCoxElt != null && coxEltToIdx.contains(rightSelCoxElt)) {
+            fillTriangle(rightSelCoxElt, '#93dcb8')
         }
 
         // Shaded Bruhat set
@@ -1216,14 +1232,9 @@ point, but certain operations were just too hard to specify.
 
     let canvasElt: HTMLCanvasElement
 
-    function hoverPoint(xy: number[]) {
-        if (selCoxEltFixed)
-            return
-
-        let wt = D.aff2.uv(xy)
-        let word = rtsys.makeDominantWord(rtDat.affCartanMat, 'coweight', rtDat.toAff(wt), 2000)
-        let elt = rtDat.cox.readWordMaybe(word)
-        selCoxElt = (elt != null && shownCoxEltsSet.has(elt)) ? elt : null
+    function hoverPoint(_xy: number[]) {
+        // In pan-zoom mode, hover does not track selection.
+        // In frozen mode, InteractiveMap dispatches pointSelected on hover, so clickPoint handles it.
     }
 
     function clickPoint(xy: number[]) {
@@ -1231,11 +1242,18 @@ point, but certain operations were just too hard to specify.
         let word = rtsys.makeDominantWord(rtDat.affCartanMat, 'coweight', rtDat.toAff(wt), 2000)
         let elt = rtDat.cox.readWordMaybe(word)
         let clickedElt = (elt != null && shownCoxEltsSet.has(elt)) ? elt : null
+        commitSelState({selCoxElt: clickedElt, rightSelCoxElt})
+    }
 
-        if (selCoxEltFixed && selCoxElt === clickedElt)
-            return
-
-        commitSelState({selCoxElt: clickedElt, selCoxEltFixed: true})
+    function rightClickPoint(e: MouseEvent) {
+        e.preventDefault()
+        let xy = [e.offsetX, e.offsetY]
+        let wt = D.aff2.uv(xy)
+        let word = rtsys.makeDominantWord(rtDat.affCartanMat, 'coweight', rtDat.toAff(wt), 2000)
+        let elt = rtDat.cox.readWordMaybe(word)
+        let clickedElt = (elt != null && shownCoxEltsSet.has(elt)) ? elt : null
+        // Toggle: right-clicking the same alcove clears the selection
+        commitSelState({selCoxElt, rightSelCoxElt: (rightSelCoxElt === clickedElt) ? null : clickedElt})
     }
 
     function handleKeydown(e: KeyboardEvent) {
@@ -1253,12 +1271,12 @@ point, but certain operations were just too hard to specify.
     }
 
     let frame: number = 0
-    $: if (canvasElt != null) { drawCanvas(canvasElt, D, rtDat, pDialation, pDialationEnabled, pDialatedGenerator, pxDialatedAlcoves, selCoxElt, shownLabels, shadedSet, cellColours, treeEdges, viewportGeometry, frame, userPort) }
+    $: if (canvasElt != null) { drawCanvas(canvasElt, D, rtDat, pDialation, pDialationEnabled, pDialatedGenerator, pxDialatedAlcoves, selCoxElt, rightSelCoxElt, shownLabels, shadedSet, cellColours, treeEdges, viewportGeometry, frame, userPort) }
 
     function takeSnapshot() {
         let ctx = new C2S(userPort.width, userPort.height)
         ctx.clearRect(userPort.width, userPort.height)
-        drawContext(ctx, D, rtDat, pDialation, pDialationEnabled, pDialatedGenerator, pxDialatedAlcoves, selCoxElt, shownLabels, shadedSet, cellColours, treeEdges, viewportGeometry, userPort)
+        drawContext(ctx, D, rtDat, pDialation, pDialationEnabled, pDialatedGenerator, pxDialatedAlcoves, selCoxElt, rightSelCoxElt, shownLabels, shadedSet, cellColours, treeEdges, viewportGeometry, userPort)
         let svgXml = ctx.getSerializedSvg(true /* Replace any named entities with numbered ones */)
         let blob = new Blob([svgXml], {type: 'image/svg+xml'})
         return {downloadName: 'AffineWeyl.svg', blob}
@@ -1300,6 +1318,7 @@ point, but certain operations were just too hard to specify.
     {takeSnapshot}
     on:pointHovered={(e) => hoverPoint(e.detail)}
     on:pointSelected={(e) => clickPoint(e.detail)}
+    on:contextmenu={rightClickPoint}
     >
     <svelte:fragment slot="other">
         <canvas bind:this={canvasElt} />

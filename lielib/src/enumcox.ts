@@ -38,6 +38,10 @@ export class EnumCox {
     /** The coatoms of x are the y where y < x is a covering relation in the Bruhat order. */
     private coat: number[][]
 
+    /** The atoms of x are the y where x < y is a covering relation in the Bruhat order.
+     * Built lazily from coat[] on first use; invalidated when the group grows. */
+    private atom: number[][] | null = null
+
     /** Action of the generators on the right. The result of xs is stored at rightgen[rank * x + s].
      * If the result of right multiplication is not yet enumerated, -1 is stored. */
     private rightgen: number[]
@@ -254,6 +258,67 @@ export class EnumCox {
             throw new Error(`The element ${x} is not yet enumerated.`)
 
         return this.coat[x]
+    }
+
+    /** Return the atoms of x: the y > x which are covering relations in the Bruhat order. */
+    atoms(x: CoxElt): CoxElt[] {
+        if (!this.isEnumerated(x))
+            throw new Error(`The element ${x} is not yet enumerated.`)
+
+        if (this.atom === null || this.atom.length !== this.size())
+            this.buildAtoms()
+
+        return this.atom![x]
+    }
+
+    /** Iterate over the direct ascendents of x in the given order. */
+    iterAscendents(x: CoxElt, order: 'leftweak' | 'rightweak' | 'bruhat' = 'bruhat', fn: (y: CoxElt) => void): void {
+        switch (order) {
+        case 'bruhat':
+            if (this.atom === null || this.atom.length !== this.size())
+                this.buildAtoms()
+            for (let y of this.atom![x]) fn(y)
+            return
+        case 'leftweak':
+            for (let s = 0; s < this.rank; s++)
+                if (!this._descendsL(s, x) && this.isMultLDefined(s, x))
+                    fn(this._multL(s, x))
+            return
+        case 'rightweak':
+            for (let s = 0; s < this.rank; s++)
+                if (!this._descendsR(x, s) && this.isMultRDefined(x, s))
+                    fn(this._multR(x, s))
+            return
+        }
+    }
+
+    /** Return a list of the direct ascendents of x in the given order. */
+    ascendents(x: CoxElt, order: 'leftweak' | 'rightweak' | 'bruhat' = 'bruhat'): CoxElt[] {
+        let ascendents: CoxElt[] = []
+        this.iterAscendents(x, order, y => ascendents.push(y))
+        return ascendents
+    }
+
+    /** A boolean array indexed by [0 .. size-1] indicating whether x >= low in the given order. */
+    bruhatUpper(low: CoxElt, order: 'leftweak' | 'rightweak' | 'bruhat' = 'bruhat'): boolean[] {
+        if (!this.isEnumerated(low))
+            throw new Error(`${low} is not enumerated.`)
+
+        let n = this.size()
+        let isHigher = arr.constant(n, false)
+        isHigher[low] = true
+        let stack: CoxElt[] = [low]
+        while (stack.length > 0) {
+            let x = stack.pop()!
+            this.iterAscendents(x, order, (y) => {
+                if (!isHigher[y]) {
+                    isHigher[y] = true
+                    stack.push(y)
+                }
+            })
+        }
+
+        return isHigher
     }
 
     /** TODO: Change this to a table-based one that fills as we grow. */
@@ -485,6 +550,15 @@ export class EnumCox {
         }
 
         return added
+    }
+
+    /** Build (or rebuild) the atom table from the current coat table. */
+    private buildAtoms() {
+        let n = this.size()
+        this.atom = Array.from({length: n}, () => [] as number[])
+        for (let y = 0; y < n; y++)
+            for (let x of this.coat[y])
+                this.atom[x].push(y)
     }
 
     // Grow the enumerated part to at least the interval [e, word], where word is a word

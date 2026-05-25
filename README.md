@@ -8,15 +8,17 @@ This repository is a fork of the original [Lievis](https://github.com/joelgibson
 
 - Added `Paper boat` shading. Currently only comprehensible for alcoves in the dominant chamber.
 
-  - Including `tiling depth` slider. It's now of quadratic time complexity because the lower bruhat interval is computed for each boat. Clearly this is not ideal, but for purely visualisation purposes it should be fine.
+  - Including `tiling depth` slider. It's now of quadratic time complexity because the lower bruhat interval, the lower dominance interval and a heavy set difference is computed for each boat. Clearly this is not ideal, but for purely visualisation purposes it should be fine.
 
 - Now AffineWeyl also have click-to-fix feature (like that of `WeylGroup`).
 
 - click-to-fix feature supports `ctrl+z` / `ctrl+shift+z` undo/redo.
 
+- Now you can right click to select or deselect an alternative alcove. For `Bruhat`, `Right weak`, `Left weak` shading modes, the alternative alcove are used to shade the interval with lower bound.
+
 The main motivation of this fork is to visualise the Paper BOATs. See [the paper](https://arxiv.org/abs/2504.04489) for details. Feel free to play around with them [online](https://sun123zxy.github.io/lievis/).
 
-The code is written with LLM assistance and I could not guarantee its quality or correctness. Do feel free to reach out if you have any questions or suggestions.
+The code is written with LLM assistance. I tried to keep the code neat, but I have not done a thorough review. Do feel free to reach out if you have any questions or suggestions.
 
 ## Original README
 

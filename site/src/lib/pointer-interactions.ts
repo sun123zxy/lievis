@@ -76,6 +76,7 @@ export function attachInteractionHandlers<T>(elt: HTMLBaseElement, handlers: Par
     }
 
     function pointerDown(event: PointerEvent) {
+        if (event.button === 2) return
         stack.push({id: event.pointerId, x: event.offsetX, y: event.offsetY, moves: 0})
         elt.setPointerCapture(event.pointerId)
 

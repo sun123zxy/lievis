@@ -195,6 +195,7 @@
         class="pointeroverlay"
         use:pointerHandlers
         on:dblclick={(e) => dispatch('pointDeselected')}
+        on:contextmenu
         />
 
 
